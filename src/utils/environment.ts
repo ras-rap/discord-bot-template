@@ -1,12 +1,23 @@
-import { exec as execCallback, execFile as execFileCallback } from 'child_process';
+import { execFile as execFileCallback, spawn } from 'child_process';
 import { access, constants, readFile, writeFile } from 'fs/promises';
 import { EOL } from 'os';
+import { basename } from 'path';
 import util from 'util';
 
 import { logger } from '@utils/logger';
 
-const exec = util.promisify(execCallback);
 const execFile = util.promisify(execFileCallback);
+
+type EditorLaunch = {
+  /** Executable to run (no shell). */
+  file: string;
+  /** Discrete argv entries — never shell-interpreted. */
+  args: string[];
+  /** Terminal editors need the user's TTY via spawn stdio: inherit. */
+  attachTerminal: boolean;
+};
+
+const TERMINAL_EDITORS = new Set(['nano', 'vim', 'vi', 'nvim', 'emacs']);
 
 /**
  * Mapping of environment variable keys to their default values.
@@ -24,9 +35,6 @@ const ENV_VARS = {
   'AUTO_REGISTER_COMMANDS': '',
 } as const;
 
-/**
- * Required environment variables that must be present.
- */
 const REQUIRED_VARS: EnvKey[] = ['DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'DISCORD_DEVELOPMENT_GUILD_ID'];
 
 type EnvKey = keyof typeof ENV_VARS;
@@ -34,45 +42,113 @@ type EnvKey = keyof typeof ENV_VARS;
 export type AppConfig = { [K in EnvKey]: string };
 
 /**
- * Returns the shell command to open .env with a given editor.
+ * Split an editor string into executable plus argv, never shell-interpreted.
  */
-const getEditorCommand = (editor: string): string => {
-  if (editor.startsWith('start')) return `${editor} .env`;
-  if (editor === 'xdg-open') return `${editor} .env`;
-  if (editor === 'nano' || editor === 'vim' || editor === 'vi' || editor === 'nvim' || editor === 'emacs')
-    return (
-      `gnome-terminal -- ${editor} .env || ` +
-      `xterm -e ${editor} .env || ` +
-      `konsole -e ${editor} .env || ` +
-      `${editor} .env`
-    );
+const parseEditorCommand = (editor: string): { file: string; args: string[] } | null => {
+  const tokens = editor.trim().split(/\s+/).filter(Boolean);
+  const [file, ...args] = tokens;
+  if (!file) return null;
 
-  return `${editor} .env`;
+  return { file, args };
+};
+
+const isTerminalEditorFile = (file: string): boolean =>
+  TERMINAL_EDITORS.has(
+    basename(file)
+      .toLowerCase()
+      .replace(/\.exe$/, ''),
+  );
+
+/**
+ * Ordered launch attempts for an editor, as executable-plus-argument arrays.
+ * Terminal fallbacks are separate invocations — never `||` shell strings.
+ */
+const getEditorLaunches = (editor: string): EditorLaunch[] => {
+  const parsed = parseEditorCommand(editor);
+  if (!parsed) return [];
+
+  const { file, args } = parsed;
+
+  // `start` is a cmd.exe builtin on Windows, not a standalone executable.
+  if (file.toLowerCase() === 'start' && process.platform === 'win32')
+    return [{ 'file': 'cmd', 'args': ['/c', 'start', '', '.env'], 'attachTerminal': false }];
+
+  if (file === 'xdg-open') return [{ file, 'args': [...args, '.env'], 'attachTerminal': false }];
+
+  if (isTerminalEditorFile(file))
+    return [
+      { 'file': 'gnome-terminal', 'args': ['--', file, ...args, '.env'], 'attachTerminal': false },
+      { 'file': 'xterm', 'args': ['-e', file, ...args, '.env'], 'attachTerminal': false },
+      { 'file': 'konsole', 'args': ['-e', file, ...args, '.env'], 'attachTerminal': false },
+      { file, 'args': [...args, '.env'], 'attachTerminal': true },
+    ];
+
+  return [{ file, 'args': [...args, '.env'], 'attachTerminal': false }];
+};
+
+const runEditorLaunch = async (launch: EditorLaunch): Promise<void> => {
+  // Terminal editors need the user's TTY; piped stdio would hang waiting for input.
+  if (launch.attachTerminal)
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(launch.file, launch.args, {
+        'cwd': process.cwd(),
+        'stdio': 'inherit',
+        'shell': false,
+      });
+      child.on('error', reject);
+      child.on('exit', (code, signal) => {
+        if (signal) reject(new Error(`Editor terminated with signal ${signal}`));
+        else if (code === 0) resolve();
+        else reject(new Error(`Editor exited with code ${code ?? 'unknown'}`));
+      });
+    });
+  else await execFile(launch.file, launch.args, { 'cwd': process.cwd(), 'shell': false });
+};
+
+/**
+ * Try each launch in order, moving to the next only when the executable is missing.
+ */
+const launchEditorWithFallbacks = async (editor: string): Promise<void> => {
+  const launches = getEditorLaunches(editor);
+  if (launches.length === 0) throw new Error(`Invalid editor: ${editor}`);
+
+  let lastError: unknown;
+  for (const launch of launches)
+    try {
+      await runEditorLaunch(launch);
+      return;
+    } catch (err) {
+      lastError = err;
+      const code = (err as { code?: string } | undefined)?.code;
+      // Missing terminal emulator → try the next fallback. Any other failure is real.
+      if (code !== 'ENOENT') throw err;
+    }
+
+  throw lastError;
 };
 
 /**
  * Checks if an editor is available on the system.
+ * Validates the same executable that will be launched — extra tokens are
+ * treated as literal argv, never shell-interpreted.
  */
 const isEditorAvailable = async (editor: string): Promise<boolean> => {
   try {
-    if (editor.startsWith('start')) return true;
+    const parsed = parseEditorCommand(editor);
+    if (!parsed) return false;
 
-    const editorCommand = editor.split(/\s+/)[0];
-    if (!editorCommand) return false;
+    // `start` is a cmd.exe builtin; only meaningful on Windows.
+    if (parsed.file.toLowerCase() === 'start') return process.platform === 'win32';
 
     // Check if the command exists using 'which' on Unix or 'where' on Windows
-    // Use execFile to avoid shell injection vulnerabilities
     const checkCommand = process.platform === 'win32' ? 'where' : 'which';
-    await execFile(checkCommand, [editorCommand], { 'cwd': process.cwd() });
+    await execFile(checkCommand, [parsed.file], { 'cwd': process.cwd(), 'shell': false });
     return true;
   } catch {
     return false;
   }
 };
 
-/**
- * Gets a list of all available editors on the system.
- */
 const getAvailableEditors = async (): Promise<string[]> => {
   const candidates: string[] = [];
   const { EDITOR, VISUAL } = process.env;
@@ -80,7 +156,6 @@ const getAvailableEditors = async (): Promise<string[]> => {
   if (EDITOR) candidates.push(EDITOR);
   if (VISUAL) candidates.push(VISUAL);
 
-  // Platform-specific editor lists
   if (process.platform === 'win32') candidates.push('notepad', 'code', 'subl', 'atom', 'notepad++', 'start ""');
   else if (process.platform === 'darwin')
     candidates.push('code', 'subl', 'atom', 'nano', 'vim', 'nvim', 'emacs', 'open', 'gedit', 'kate');
@@ -103,14 +178,11 @@ const getAvailableEditors = async (): Promise<string[]> => {
 
   // Check which editors are actually available
   const available: string[] = [];
-  for (const editor of candidates) if (await isEditorAvailable(editor)) available.push(editor);
+  for (const editor of new Set(candidates)) if (await isEditorAvailable(editor)) available.push(editor);
 
   return available;
 };
 
-/**
- * Prompts the user to select an editor from available options.
- */
 const selectEditor = async (editors: string[]): Promise<string> => {
   // Interactive prompt goes to stdout, not through the structured logger.
   // eslint-disable-next-line no-console
@@ -151,9 +223,6 @@ const selectEditor = async (editors: string[]): Promise<string> => {
   });
 };
 
-/**
- * Attempts to open .env in the user's preferred or a fallback editor.
- */
 const openEnvironmentEditor = async (): Promise<void> => {
   const availableEditors = await getAvailableEditors();
   const [fallback] = availableEditors;
@@ -176,7 +245,7 @@ const openEnvironmentEditor = async (): Promise<void> => {
     }
 
   try {
-    await exec(getEditorCommand(selectedEditor), { 'cwd': process.cwd() });
+    await launchEditorWithFallbacks(selectedEditor);
     logger.info({ 'editor': selectedEditor }, 'Opened .env');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
