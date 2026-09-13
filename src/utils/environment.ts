@@ -55,10 +55,8 @@ const getEditorCommand = (editor: string): string => {
  */
 const isEditorAvailable = async (editor: string): Promise<boolean> => {
   try {
-    // For Windows "start" command, we assume it's available
     if (editor.startsWith('start')) return true;
 
-    // Extract the executable name from the editor command (handles "code --wait" etc.)
     const editorCommand = editor.split(/\s+/)[0];
     if (!editorCommand) return false;
 
@@ -114,52 +112,41 @@ const getAvailableEditors = async (): Promise<string[]> => {
  * Prompts the user to select an editor from available options.
  */
 const selectEditor = async (editors: string[]): Promise<string> => {
-  logger.info({ editors }, 'Multiple editors detected');
+  // Interactive prompt goes to stdout, not through the structured logger.
   // eslint-disable-next-line no-console
-  console.log('\n📝 Multiple text editors detected. Please select one:');
-  editors.forEach((editor, index) => {
-    // eslint-disable-next-line no-console
-    console.log(`  ${index + 1}. ${editor}`);
-  });
-  // eslint-disable-next-line no-console
-  console.log('\nEnter the number of your choice (or press Ctrl+C to cancel): ');
+  console.log(
+    `\n📝 Multiple text editors detected. Please select one:\n${editors.map((editor, index) => `  ${index + 1}. ${editor}`).join('\n')}\n\nEnter the number of your choice (or press Ctrl+C to cancel): `,
+  );
 
-  // Read user input from stdin
-  const readline = await import('readline');
-  const rl = readline.createInterface({
+  const { createInterface } = await import('readline');
+  const rl = createInterface({
     'input': process.stdin,
     'output': process.stdout,
   });
 
   return new Promise<string>((resolve, reject) => {
-    let resolved = false;
+    let settled = false;
 
-    // Handle stdin closing or Ctrl+D
+    // Stdin closed / Ctrl+D without a successful choice.
     rl.on('close', () => {
-      if (!resolved) {
-        logger.warn('Editor selection cancelled or stdin closed');
-        reject(new Error('Editor selection cancelled'));
-      }
+      if (!settled) reject(new Error('Editor selection cancelled'));
     });
 
-    // Handle SIGINT (Ctrl+C)
     rl.on('SIGINT', () => {
-      logger.warn('Editor selection interrupted by user');
+      settled = true;
       rl.close();
       reject(new Error('Editor selection interrupted'));
     });
 
     rl.on('line', input => {
-      const choice = parseInt(input.trim(), 10);
-      if (choice >= 1 && choice <= editors.length) {
-        const selected = editors[choice - 1];
+      const selected = editors[Number.parseInt(input.trim(), 10) - 1];
+      if (selected) {
+        settled = true;
         rl.close();
-        if (selected) {
-          resolved = true;
-          resolve(selected);
-        }
+        resolve(selected);
+      } else
         // eslint-disable-next-line no-console
-      } else console.log('Invalid choice. Please enter a number between 1 and', editors.length);
+        console.log(`Invalid choice. Enter a number between 1 and ${editors.length}: `);
     });
   });
 };
@@ -168,54 +155,29 @@ const selectEditor = async (editors: string[]): Promise<string> => {
  * Attempts to open .env in the user's preferred or a fallback editor.
  */
 const openEnvironmentEditor = async (): Promise<void> => {
-  logger.info('Attempting to open .env in an editor');
-
   const availableEditors = await getAvailableEditors();
+  const [fallback] = availableEditors;
 
-  if (availableEditors.length === 0) {
+  if (!fallback) {
     logger.error('No text editors found on the system');
     return;
   }
 
-  let selectedEditor: string;
-  if (availableEditors.length === 1) {
-    const firstEditor = availableEditors[0];
-    if (!firstEditor) {
-      logger.error('Failed to get first editor from list');
+  let selectedEditor = fallback;
+
+  const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  if (availableEditors.length > 1 && isInteractive)
+    try {
+      selectedEditor = await selectEditor(availableEditors);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error({ message }, 'Editor selection failed');
       return;
     }
-    selectedEditor = firstEditor;
-    logger.info({ 'editor': selectedEditor }, 'Using the only available editor');
-  } else {
-    const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
-
-    if (isInteractive)
-      try {
-        selectedEditor = await selectEditor(availableEditors);
-        logger.info({ 'editor': selectedEditor }, 'User selected editor');
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logger.error({ message }, 'Editor selection failed');
-        return;
-      }
-    else {
-      const firstEditor = availableEditors[0];
-      if (!firstEditor) {
-        logger.error('Failed to get first editor from list in non-interactive environment');
-        return;
-      }
-      selectedEditor = firstEditor;
-      logger.info(
-        { 'editor': selectedEditor },
-        'Non-interactive environment detected; using the first available editor by default',
-      );
-    }
-  }
 
   try {
-    logger.debug({ 'editor': selectedEditor }, 'Trying to open .env');
     await exec(getEditorCommand(selectedEditor), { 'cwd': process.cwd() });
-    logger.info({ 'editor': selectedEditor }, 'Successfully opened .env');
+    logger.info({ 'editor': selectedEditor }, 'Opened .env');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error({ 'editor': selectedEditor, message }, 'Failed to open .env with editor');
