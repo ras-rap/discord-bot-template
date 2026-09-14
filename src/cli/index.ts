@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import { logger } from '@utils/logger';
 
 import type { DeployScope } from '@typings/registry';
@@ -9,15 +8,15 @@ type Subcommand = (typeof SUBCOMMANDS)[number];
 const isSubcommand = (value: string): value is Subcommand => (SUBCOMMANDS as readonly string[]).includes(value);
 
 const printUsage = () => {
-  console.log('Usage: bun run commands <subcommand>\n');
-  console.log('Subcommands:');
-  console.log('  deploy   Deploy slash commands to Discord');
-  console.log('  clear    Remove all registered commands from Discord');
-  console.log('  list     Compare local commands against registered commands\n');
-  console.log('Flags:');
-  console.log('  --global   Force global scope (production)');
-  console.log('  --guild    Force guild scope (development)');
-  console.log('  --force    Skip change detection and force deploy');
+  logger.info('Usage: bun run commands <subcommand>');
+  logger.info('Subcommands:');
+  logger.info('  deploy   Deploy slash commands to Discord');
+  logger.info('  clear    Remove all registered commands from Discord');
+  logger.info('  list     Compare local commands against registered commands');
+  logger.info('Flags:');
+  logger.info('  --global   Force global scope (production)');
+  logger.info('  --guild    Force guild scope (development)');
+  logger.info('  --force    Skip change detection and force deploy');
 };
 
 const args = process.argv.slice(2);

@@ -9,11 +9,8 @@ import { logger } from '@utils/logger';
 const execFile = util.promisify(execFileCallback);
 
 type EditorLaunch = {
-  /** Executable to run (no shell). */
   file: string;
-  /** Discrete argv entries — never shell-interpreted. */
   args: string[];
-  /** Terminal editors need the user's TTY via spawn stdio: inherit. */
   attachTerminal: boolean;
 };
 
@@ -41,9 +38,6 @@ type EnvKey = keyof typeof ENV_VARS;
 
 export type AppConfig = { [K in EnvKey]: string };
 
-/**
- * Split an editor string into executable plus argv, never shell-interpreted.
- */
 const parseEditorCommand = (editor: string): { file: string; args: string[] } | null => {
   const tokens = editor.trim().split(/\s+/).filter(Boolean);
   const [file, ...args] = tokens;
@@ -59,17 +53,12 @@ const isTerminalEditorFile = (file: string): boolean =>
       .replace(/\.exe$/, ''),
   );
 
-/**
- * Ordered launch attempts for an editor, as executable-plus-argument arrays.
- * Terminal fallbacks are separate invocations — never `||` shell strings.
- */
 const getEditorLaunches = (editor: string): EditorLaunch[] => {
   const parsed = parseEditorCommand(editor);
   if (!parsed) return [];
 
   const { file, args } = parsed;
 
-  // `start` is a cmd.exe builtin on Windows, not a standalone executable.
   if (file.toLowerCase() === 'start' && process.platform === 'win32')
     return [{ 'file': 'cmd', 'args': ['/c', 'start', '', '.env'], 'attachTerminal': false }];
 
@@ -87,12 +76,10 @@ const getEditorLaunches = (editor: string): EditorLaunch[] => {
 };
 
 const runEditorLaunch = async (launch: EditorLaunch): Promise<void> => {
-  // Terminal editors need the user's TTY; piped stdio would hang waiting for input.
   if (launch.attachTerminal)
     await new Promise<void>((resolve, reject) => {
       const child = spawn(launch.file, launch.args, {
         'cwd': process.cwd(),
-        'stdio': 'inherit',
         'shell': false,
       });
       child.on('error', reject);
@@ -105,9 +92,6 @@ const runEditorLaunch = async (launch: EditorLaunch): Promise<void> => {
   else await execFile(launch.file, launch.args, { 'cwd': process.cwd(), 'shell': false });
 };
 
-/**
- * Try each launch in order, moving to the next only when the executable is missing.
- */
 const launchEditorWithFallbacks = async (editor: string): Promise<void> => {
   const launches = getEditorLaunches(editor);
   if (launches.length === 0) throw new Error(`Invalid editor: ${editor}`);
@@ -120,27 +104,19 @@ const launchEditorWithFallbacks = async (editor: string): Promise<void> => {
     } catch (err) {
       lastError = err;
       const code = (err as { code?: string } | undefined)?.code;
-      // Missing terminal emulator → try the next fallback. Any other failure is real.
       if (code !== 'ENOENT') throw err;
     }
 
   throw lastError;
 };
 
-/**
- * Checks if an editor is available on the system.
- * Validates the same executable that will be launched — extra tokens are
- * treated as literal argv, never shell-interpreted.
- */
 const isEditorAvailable = async (editor: string): Promise<boolean> => {
   try {
     const parsed = parseEditorCommand(editor);
     if (!parsed) return false;
 
-    // `start` is a cmd.exe builtin; only meaningful on Windows.
     if (parsed.file.toLowerCase() === 'start') return process.platform === 'win32';
 
-    // Check if the command exists using 'which' on Unix or 'where' on Windows
     const checkCommand = process.platform === 'win32' ? 'where' : 'which';
     await execFile(checkCommand, [parsed.file], { 'cwd': process.cwd(), 'shell': false });
     return true;
@@ -176,7 +152,6 @@ const getAvailableEditors = async (): Promise<string[]> => {
       'xdg-open',
     );
 
-  // Check which editors are actually available
   const available: string[] = [];
   for (const editor of new Set(candidates)) if (await isEditorAvailable(editor)) available.push(editor);
 
@@ -184,9 +159,7 @@ const getAvailableEditors = async (): Promise<string[]> => {
 };
 
 const selectEditor = async (editors: string[]): Promise<string> => {
-  // Interactive prompt goes to stdout, not through the structured logger.
-  // eslint-disable-next-line no-console
-  console.log(
+  logger.info(
     `\n📝 Multiple text editors detected. Please select one:\n${editors.map((editor, index) => `  ${index + 1}. ${editor}`).join('\n')}\n\nEnter the number of your choice (or press Ctrl+C to cancel): `,
   );
 
@@ -199,7 +172,6 @@ const selectEditor = async (editors: string[]): Promise<string> => {
   return new Promise<string>((resolve, reject) => {
     let settled = false;
 
-    // Stdin closed / Ctrl+D without a successful choice.
     rl.on('close', () => {
       if (!settled) reject(new Error('Editor selection cancelled'));
     });
@@ -216,9 +188,7 @@ const selectEditor = async (editors: string[]): Promise<string> => {
         settled = true;
         rl.close();
         resolve(selected);
-      } else
-        // eslint-disable-next-line no-console
-        console.log(`Invalid choice. Enter a number between 1 and ${editors.length}: `);
+      } else logger.warn(`Invalid choice. Enter a number between 1 and ${editors.length}: `);
     });
   });
 };
@@ -253,10 +223,6 @@ const openEnvironmentEditor = async (): Promise<void> => {
   }
 };
 
-/**
- * Ensures a .env file exists by copying from .env.example
- * or generating a template with all ENV_VARS.
- */
 const ensureEnvFileExists = async (): Promise<void> => {
   try {
     await access('.env', constants.F_OK);
@@ -285,10 +251,6 @@ const ensureEnvFileExists = async (): Promise<void> => {
   }
 };
 
-/**
- * Reads, applies defaults, and validates all environment variables.
- * @throws Error if any required variables are missing.
- */
 const getValidatedConfig = (): AppConfig => {
   logger.debug('Validating environment variables');
 
@@ -297,17 +259,15 @@ const getValidatedConfig = (): AppConfig => {
 
   for (const key of Object.keys(ENV_VARS) as EnvKey[]) {
     const raw = process.env[key];
-    const hasRaw = !!raw && raw.length > 0;
+    const hasRaw = raw !== undefined && raw.length > 0;
     const defaultValue = ENV_VARS[key];
-    const value = hasRaw ? raw! : defaultValue;
+    const value = hasRaw ? raw : defaultValue;
 
     logger.debug({ key, raw, defaultValue, value }, 'Resolved env var');
 
     if (value && value.length > 0) config[key] = value;
     else if (REQUIRED_VARS.includes(key)) missing.push(key);
-    else
-      // Optional vars get empty string if not provided
-      config[key] = '';
+    else config[key] = '';
   }
 
   if (missing.length > 0) {
@@ -321,10 +281,6 @@ const getValidatedConfig = (): AppConfig => {
   return config as AppConfig;
 };
 
-/**
- * Loads and validates configuration, opening an editor on failure.
- * Exits after prompting in non-production mode.
- */
 const initConfig = async (): Promise<AppConfig> => {
   logger.debug('Initializing configuration');
 
