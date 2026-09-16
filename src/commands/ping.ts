@@ -3,11 +3,13 @@ import { Discord, Guard, Slash } from 'discordx';
 
 import { cooldown, guildOnly } from '../guards/index.js';
 
+import type { ChatInputCommandInteraction } from 'discord.js';
+
 @Discord()
 class PingCommand {
   @Slash({ 'description': 'Replies with Pong!' })
   @Guard(guildOnly, cooldown(5))
-  async ping(interaction: any) {
+  async ping(interaction: ChatInputCommandInteraction) {
     const latency = Date.now() - interaction.createdTimestamp;
     const apiLatency = Math.round(interaction.client.ws.ping);
 

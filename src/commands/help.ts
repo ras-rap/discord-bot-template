@@ -1,3 +1,4 @@
+import type { ChatInputCommandInteraction } from 'discord.js';
 import { ApplicationCommandOptionType, EmbedBuilder, MessageFlags } from 'discord.js';
 import { Client, Discord, Slash, SlashOption } from 'discordx';
 
@@ -12,9 +13,8 @@ class HelpCommand {
       type: ApplicationCommandOptionType.String,
     })
     commandName: string | null,
-    interaction: any,
+    interaction: ChatInputCommandInteraction,
   ) {
-    // Get slash commands from DiscordX's static registry
     const allCommands = Client.applicationCommandSlashes;
 
     if (commandName) {
@@ -48,7 +48,7 @@ class HelpCommand {
     }
 
     const embed = new EmbedBuilder()
-      .setTitle('📖 Commands')
+      .setTitle('Commands')
       .setColor('Blurple')
       .setDescription(
         allCommands.map(c => `• **/${c.name}** — ${c.description || 'No description'}`).join('\n') ||

@@ -1,5 +1,5 @@
 import { execFile as execFileCallback, spawn } from 'child_process';
-import { access, constants, writeFile } from 'fs/promises';
+import { access, constants, readFile, writeFile } from 'fs/promises';
 import { EOL } from 'os';
 import { basename } from 'path';
 import util from 'util';
@@ -191,17 +191,42 @@ export const openEnvironmentEditor = async (): Promise<void> => {
   }
 };
 
+const PLACEHOLDER_PATTERN = /your_.*_here/i;
+
+export const hasPlaceholderValues = async (): Promise<boolean> => {
+  try {
+    const content = await readFile('.env', 'utf-8');
+    return PLACEHOLDER_PATTERN.test(content);
+  } catch {
+    return false;
+  }
+};
+
 export const ensureDotenv = async (): Promise<boolean> => {
   try {
     await access('.env', constants.F_OK);
+
+    // .env exists — check if it still has placeholder values
+    if (await hasPlaceholderValues()) {
+      logger.warn('.env contains placeholder values and needs to be configured.');
+      return false;
+    }
+
     return true;
   } catch {
-    const content = Object.entries(ENV_VARS)
-      .map(([key, defaultValue]) => `${key}=${defaultValue ?? ''}`)
-      .join(EOL);
-
-    await writeFile('.env', content, 'utf-8');
-    logger.info('Created .env file with default values.');
+    // .env doesn't exist — copy from .env.example
+    try {
+      const template = await readFile('.env.example', 'utf-8');
+      await writeFile('.env', template, 'utf-8');
+      logger.info('Created .env from .env.example template.');
+    } catch {
+      // Fallback to hardcoded defaults if .env.example is missing
+      const content = Object.entries(ENV_VARS)
+        .map(([key, defaultValue]) => `${key}=${defaultValue ?? ''}`)
+        .join(EOL);
+      await writeFile('.env', content, 'utf-8');
+      logger.info('Created .env file with default values.');
+    }
     return false;
   }
 };
