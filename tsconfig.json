@@ -13,9 +13,6 @@
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
 
-    "jsx": "react-jsx",
-    "allowJs": true,
-
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
 

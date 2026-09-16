@@ -1,4 +1,10 @@
-import { Event } from '@structures/Event';
-import { logger } from '@utils/logger';
+import { Discord, Once } from 'discordx';
+import { logger } from '../utils/logger.js';
 
-export const ready = new Event('clientReady', true).run(client => logger.info(`🟢 Logged in as ${client.user.tag}`));
+@Discord()
+class ReadyEvent {
+  @Once({ event: 'ready' })
+  async onReady() {
+    logger.info('🟢 Bot is ready!');
+  }
+}

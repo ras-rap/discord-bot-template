@@ -14,37 +14,37 @@ const level = (LOG_LEVEL ?? (isProd ? 'info' : 'debug')).toLowerCase() as
   | 'fatal';
 
 const logDir = join(process.cwd(), 'logs');
-if (isProd) mkdirSync(logDir, { 'recursive': true });
+if (isProd) mkdirSync(logDir, { recursive: true });
 
 const transport = isProd
   ? pino.transport({
-      'targets': [
+      targets: [
         {
-          'target': 'pino/file',
-          'level': 'info',
-          'options': { 'destination': join(logDir, 'app.log') },
+          target: 'pino/file',
+          level: 'info',
+          options: { destination: join(logDir, 'app.log') },
         },
         {
-          'target': 'pino/file',
-          'level': 'error',
-          'options': { 'destination': join(logDir, 'error.log') },
+          target: 'pino/file',
+          level: 'error',
+          options: { destination: join(logDir, 'error.log') },
         },
       ],
     })
   : pino.transport({
-      'target': 'pino-pretty',
-      'options': {
-        'colorize': true,
-        'translateTime': 'yyyy-mm-dd HH:MM:ss.l o',
-        'ignore': 'pid,hostname',
+      target: 'pino-pretty',
+      options: {
+        colorize: true,
+        translateTime: 'yyyy-mm-dd HH:MM:ss.l o',
+        ignore: 'pid,hostname',
       },
     });
 
 export const logger: Logger = pino(
   {
     level,
-    'base': {},
-    'timestamp': pino.stdTimeFunctions.isoTime,
+    base: {},
+    timestamp: pino.stdTimeFunctions.isoTime,
   },
   transport,
 );

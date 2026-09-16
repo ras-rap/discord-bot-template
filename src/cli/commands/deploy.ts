@@ -1,26 +1,45 @@
-import { loadCommands } from '@handlers/commands';
-import { Client } from '@structures/Client';
-import { deploy } from '@utils/commandRegistry';
-import { logger } from '@utils/logger';
+import { importx } from '@discordx/importer';
+import { REST, Routes } from 'discord.js';
+import { Client } from 'discordx';
 
-import type { DeployScope } from '@typings/registry';
+import { DISCORD_CLIENT_ID, DISCORD_DEVELOPMENT_GUILD_ID, DISCORD_TOKEN, NODE_ENV } from '../../utils/env.js';
+import { logger } from '../../utils/logger.js';
+
+import type { DeployScope } from './registry.js';
 
 interface Flags {
-  scope?: DeployScope;
+  scope?: DeployScope | undefined;
   force: boolean;
 }
 
-export const run = async (flags: Flags): Promise<void> => {
-  const client = new Client();
-  await loadCommands(client);
+// Import all decorated command classes
+await importx(`${import.meta.dirname}/../../../{commands,guards}/**/*.ts`);
 
-  const result = await deploy({
-    'commands': client.commands,
-    'scope': flags.scope,
-    'force': flags.force,
-  });
+const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 
-  if (result.reason === 'skipped') logger.info('No command changes detected. Use --force to deploy anyway.');
+const resolveScope = (override?: DeployScope): DeployScope => {
+  if (override !== undefined) return override;
+  return NODE_ENV === 'production' ? 'global' : 'guild';
+};
 
-  if (result.reason === 'error') process.exit(1);
+const getRoute = (scope: DeployScope) =>
+  scope === 'guild'
+    ? Routes.applicationGuildCommands(DISCORD_CLIENT_ID, DISCORD_DEVELOPMENT_GUILD_ID)
+    : Routes.applicationCommands(DISCORD_CLIENT_ID);
+
+export const deploy = async (flags: Flags): Promise<void> => {
+  const scope = resolveScope(flags.scope);
+  const route = getRoute(scope);
+
+  // Get commands from DiscordX's static registry
+  const commands = Client.applicationCommandSlashes.map(cmd => cmd.toJSON());
+  const label = scope === 'guild' ? `to guild ${DISCORD_DEVELOPMENT_GUILD_ID}` : 'globally';
+
+  try {
+    await rest.put(route, { body: commands });
+    logger.info(`✅ Registered ${commands.length} command(s) ${label}`);
+  } catch (error) {
+    logger.error({ error }, '❌ Failed to register commands');
+    process.exit(1);
+  }
 };
