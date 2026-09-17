@@ -6,7 +6,7 @@ import { cooldown, guildOnly } from '../guards/index.js';
 import type { ChatInputCommandInteraction } from 'discord.js';
 
 @Discord()
-class PingCommand {
+export class PingCommand {
   @Slash({ 'description': 'Replies with Pong!' })
   @Guard(guildOnly, cooldown(5))
   async ping(interaction: ChatInputCommandInteraction) {

@@ -28,7 +28,7 @@ import type {
 
 @Discord()
 @SlashGroup({ 'name': 'example', 'description': 'Showcase all interactable examples' })
-class ExampleCommand {
+export class ExampleCommand {
   @Slash({ 'description': 'Showcase all interactable examples' })
   @SlashGroup('example')
   @Guard(guildOnly, cooldown(10))

@@ -4,7 +4,8 @@ import type { ChatInputCommandInteraction, PermissionResolvable } from 'discord.
 import type { Client, GuardFunction, Next } from 'discordx';
 
 type CooldownScope = 'user' | 'guild' | 'channel' | 'global';
-const cooldowns = new Map<string, number>();
+/** @internal Exported for testing — reset between test runs. */
+export const cooldowns = new Map<string, number>();
 
 export const cooldown =
   (seconds: number, scope: CooldownScope = 'user'): GuardFunction =>

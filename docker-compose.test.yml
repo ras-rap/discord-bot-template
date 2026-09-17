@@ -1,0 +1,73 @@
+# Spacebar test instance for bot E2E testing
+# Usage:
+#   docker compose -f docker-compose.test.yml up -d
+#   docker compose -f docker-compose.test.yml down -v
+#
+# The API is available at http://localhost:3002/api
+# The gateway (WebSocket) is at ws://localhost:3001
+
+services:
+  spacebar-gateway:
+    image: ghcr.io/spacebarchat/server-gateway:latest
+    environment:
+      DATABASE: "postgres://postgres:postgres@spacebar-db/postgres"
+      CONFIG_PATH: "config.json"
+    networks:
+      - spacebar-test
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+    depends_on:
+      spacebar-db:
+        condition: service_healthy
+
+  spacebar-api:
+    image: ghcr.io/spacebarchat/server-api:latest
+    environment:
+      DATABASE: "postgres://postgres:postgres@spacebar-db/postgres"
+      CONFIG_PATH: "config.json"
+    networks:
+      - spacebar-test
+    ports:
+      - "3002:3001"
+    restart: unless-stopped
+    depends_on:
+      spacebar-db:
+        condition: service_healthy
+
+  spacebar-cdn:
+    image: ghcr.io/spacebarchat/server-cdn:latest
+    environment:
+      DATABASE: "postgres://postgres:postgres@spacebar-db/postgres"
+      CONFIG_PATH: "config.json"
+    networks:
+      - spacebar-test
+    ports:
+      - "3003:3001"
+    restart: unless-stopped
+    depends_on:
+      spacebar-db:
+        condition: service_healthy
+
+  spacebar-db:
+    image: postgres:18-alpine
+    networks:
+      - spacebar-test
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    networks:
+      - spacebar-test
+    restart: unless-stopped
+
+networks:
+  spacebar-test:

@@ -10,7 +10,10 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "commands": "bun src/cli/index.ts"
+    "commands": "bun src/cli/index.ts",
+    "test": "bun test",
+    "test:unit": "bun test tests/guards.test.ts tests/commands/",
+    "test:e2e": "bun test tests/e2e/"
   },
   "dependencies": {
     "@discordx/importer": "^1.2.1",

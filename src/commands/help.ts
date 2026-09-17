@@ -3,7 +3,7 @@ import { ApplicationCommandOptionType, EmbedBuilder, MessageFlags } from 'discor
 import { Client, Discord, Slash, SlashOption } from 'discordx';
 
 @Discord()
-class HelpCommand {
+export class HelpCommand {
   @Slash({ description: 'View all available commands or get help for a specific one' })
   async help(
     @SlashOption({
